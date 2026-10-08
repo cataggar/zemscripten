@@ -12,7 +12,7 @@ pub fn build(b: *std.Build) void {
 
 pub fn emccPath(b: *std.Build) []const u8 {
     return std.fs.path.join(b.allocator, &.{
-        b.dependency("emsdk", .{}).path("").getPath(b),
+        b.dependency("emsdk", .{}).builder.root.toString(b.allocator) catch unreachable,
         "upstream",
         "emscripten",
         switch (builtin.target.os.tag) {
@@ -24,7 +24,7 @@ pub fn emccPath(b: *std.Build) []const u8 {
 
 pub fn emrunPath(b: *std.Build) []const u8 {
     return std.fs.path.join(b.allocator, &.{
-        b.dependency("emsdk", .{}).path("").getPath(b),
+        b.dependency("emsdk", .{}).builder.root.toString(b.allocator) catch unreachable,
         "upstream",
         "emscripten",
         switch (builtin.target.os.tag) {
@@ -36,7 +36,7 @@ pub fn emrunPath(b: *std.Build) []const u8 {
 
 pub fn htmlPath(b: *std.Build) []const u8 {
     return std.fs.path.join(b.allocator, &.{
-        b.dependency("emsdk", .{}).path("").getPath(b),
+        b.dependency("emsdk", .{}).builder.root.toString(b.allocator) catch unreachable,
         "upstream",
         "emscripten",
         "src",
@@ -46,7 +46,7 @@ pub fn htmlPath(b: *std.Build) []const u8 {
 
 pub fn activateEmsdkStep(b: *std.Build) *std.Build.Step {
     const emsdk_script_path = std.fs.path.join(b.allocator, &.{
-        b.dependency("emsdk", .{}).path("").getPath(b),
+        b.dependency("emsdk", .{}).builder.root.toString(b.allocator) catch unreachable,
         switch (builtin.target.os.tag) {
             .windows => "emsdk.bat",
             else => "emsdk",
@@ -68,39 +68,39 @@ pub fn activateEmsdkStep(b: *std.Build) *std.Build.Step {
     var emsdk_activate = b.addSystemCommand(&.{ emsdk_script_path, "activate", emsdk_version });
     emsdk_activate.step.dependOn(&emsdk_install.step);
 
-    const step = b.allocator.create(std.Build.Step) catch unreachable;
-    step.* = std.Build.Step.init(.{
-        .id = .custom,
-        .name = "Activate EMSDK",
-        .owner = b,
-        .makeFn = &struct {
-            fn make(_: *std.Build.Step, _: std.Build.Step.MakeOptions) anyerror!void {}
-        }.make,
-    });
+    const step = b.allocator.create(std.Build.Step.TopLevel) catch unreachable;
+    step.* = .{
+        .description = "Activate EMSDK",
+        .step = std.Build.Step.init(.{
+            .tag = .top_level,
+            .name = "Activate EMSDK",
+            .owner = b,
+        }),
+    };
 
     switch (builtin.target.os.tag) {
         .linux, .macos => {
             const chmod_emcc = b.addSystemCommand(&.{ "chmod", "+x", emccPath(b) });
             chmod_emcc.step.dependOn(&emsdk_activate.step);
-            step.dependOn(&chmod_emcc.step);
+            step.step.dependOn(&chmod_emcc.step);
 
             const chmod_emrun = b.addSystemCommand(&.{ "chmod", "+x", emrunPath(b) });
             chmod_emrun.step.dependOn(&emsdk_activate.step);
-            step.dependOn(&chmod_emrun.step);
+            step.step.dependOn(&chmod_emrun.step);
         },
         .windows => {
             const takeown_emcc = b.addSystemCommand(&.{ "takeown", "/f", emccPath(b) });
             takeown_emcc.step.dependOn(&emsdk_activate.step);
-            step.dependOn(&takeown_emcc.step);
+            step.step.dependOn(&takeown_emcc.step);
 
             const takeown_emrun = b.addSystemCommand(&.{ "takeown", "/f", emrunPath(b) });
             takeown_emrun.step.dependOn(&emsdk_activate.step);
-            step.dependOn(&takeown_emrun.step);
+            step.step.dependOn(&takeown_emrun.step);
         },
         else => {},
     }
 
-    return step;
+    return &step.step;
 }
 
 pub const EmccFlags = std.StringHashMap(void);
@@ -285,12 +285,16 @@ pub fn emccStep(
 
 pub fn emrunStep(
     b: *std.Build,
-    html_path: []const u8,
+    html_path: anytype,
     extra_args: []const []const u8,
 ) *std.Build.Step {
     var emrun = b.addSystemCommand(&.{emrunPath(b)});
     emrun.addArgs(extra_args);
-    emrun.addArg(html_path);
+    if (@TypeOf(html_path) == std.Build.LazyPath) {
+        emrun.addFileArg(html_path);
+    } else {
+        emrun.addArg(html_path);
+    }
     // emrun.addArg("--");
 
     return &emrun.step;
