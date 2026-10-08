@@ -2,6 +2,11 @@
 
 Zig build package and shims for [Emscripten](https://emscripten.org) emsdk
 
+The package requires Zig 0.17.0. Its Emscripten settings, allocator and C
+callback interfaces are unchanged. `emrunStep` accepts a `std.Build.LazyPath`
+as well as the existing string path argument, so installation paths can be
+resolved during build execution.
+
 ## How to use it
 
 Add `zemscripten` and (optionally) `emsdk` to your build.zig.zon dependencies
@@ -16,17 +21,24 @@ Emsdk must be activated before it can be used. You can use `activateEmsdkStep` t
 
 Add zemscripten's "root" module to your wasm compile target., then create an `emcc` build step. We use zemscripten's default flags and settings which can be overridden for your project specific requirements. Refer to the [emcc documentation](https://emscripten.org/docs/tools_reference/emcc.html). Example build.zig code:
 ```zig
-    const wasm = b.addStaticLibrary(.{
+    const wasm = b.addLibrary(.{
         .name = "MyGame",
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
+        .linkage = .static,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
 
     const zemscripten = b.dependency("zemscripten", .{});
     wasm.root_module.addImport("zemscripten", zemscripten.module("root"));
+    wasm.step.dependOn(activate_emsdk_step);
 
-    const emcc_flags = @import("zemscripten").emccDefaultFlags(b.allocator, optimize);
+    const emcc_flags = @import("zemscripten").emccDefaultFlags(b.allocator, .{
+        .optimize = optimize,
+        .fsanitize = true,
+    });
 
     var emcc_settings = @import("zemscripten").emccDefaultSettings(b.allocator, .{
         .optimize = optimize,
@@ -94,7 +106,7 @@ You can also define a run step that invokes `emrun`. This will serve the html lo
     const emrun_args = .{};
     const emrun_step = @import("zemscripten").emrunStep(
         b,
-        b.getInstallPath(.{ .custom = "web" }, html_filename),
+        b.graph.path(.install_prefix, b.pathJoin(&.{ "web", html_filename })),
         &emrun_args,
     );
 

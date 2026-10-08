@@ -3,7 +3,8 @@
 const std = @import("std");
 
 comptime {
-    _ = std.testing.refAllDeclsRecursive(@This());
+    std.testing.refAllDecls(@This());
+    std.testing.refAllDecls(EmmallocAllocator);
 }
 
 pub extern fn emscripten_sleep(ms: u32) void;
@@ -58,7 +59,7 @@ pub fn setResizeCallback(
         cb,
         2,
     );
-    return @enumFromInt(result);
+    return @fromBackingInt(@intCast(result));
 }
 extern fn emscripten_set_resize_callback_on_thread(
     [*:0]const u8,
@@ -73,11 +74,11 @@ pub fn getElementCssSize(
     width: *f64,
     height: *f64,
 ) EmscriptenResult {
-    return @enumFromInt(emscripten_get_element_css_size(
+    return @fromBackingInt(@intCast(emscripten_get_element_css_size(
         target_id,
         width,
         height,
-    ));
+    )));
 }
 extern fn emscripten_get_element_css_size([*:0]const u8, *f64, *f64) c_int;
 
@@ -111,7 +112,7 @@ pub const EmmallocAllocator = struct {
     ) ?[*]u8 {
         _ = ctx;
         _ = return_address;
-        const ptr_align: u32 = @as(u32, 1) << @as(u5, @intFromEnum(ptr_align_log2));
+        const ptr_align: u32 = @as(u32, 1) << @as(u5, @backingInt(ptr_align_log2));
         if (!std.math.isPowerOfTwo(ptr_align)) unreachable;
         const ptr = emmalloc_memalign(ptr_align, len) orelse return null;
         return @ptrCast(ptr);
@@ -158,12 +159,13 @@ extern fn emscripten_console_error([*c]const u8) void;
 extern fn emscripten_console_warn([*c]const u8) void;
 extern fn emscripten_console_log([*c]const u8) void;
 /// std.panic impl
-pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace, ret_addr: ?usize) noreturn {
-    _ = error_return_trace;
+pub const panic = std.debug.FullPanic(panicImpl);
+
+fn panicImpl(msg: []const u8, ret_addr: ?usize) noreturn {
     _ = ret_addr;
 
     var buf: [1024]u8 = undefined;
-    const error_msg: [:0]u8 = std.fmt.bufPrintZ(&buf, "PANIC! {s}", .{msg}) catch unreachable;
+    const error_msg: [:0]u8 = std.mem.printSentinel(&buf, "PANIC! {s}", .{msg}, 0) catch unreachable;
     emscripten_err(error_msg.ptr);
 
     while (true) {
@@ -183,7 +185,7 @@ pub fn log(
     const prefix = level_txt ++ prefix2;
 
     var buf: [1024]u8 = undefined;
-    const msg = std.fmt.bufPrintZ(buf[0 .. buf.len - 1], prefix ++ format, args) catch |err| {
+    const msg = std.mem.printSentinel(buf[0 .. buf.len - 1], prefix ++ format, args, 0) catch |err| {
         switch (err) {
             error.NoSpaceLeft => {
                 emscripten_console_error("log message too long, skipped.");
